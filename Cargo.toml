@@ -6,3 +6,20 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+
+axum = "0.7.5"
+sqlx = { version = "0.7.2", features = ["runtime-async-std", "postgres","uuid","time","chrono"] }
+tokio = { version = "1.33", features = ["full"] }
+jwt = { version = "0.16.0", features = ["openssl"] }
+tower = "0.4.13"
+tower-http = { version = "0.5.0", features = ["cors"] }
+serde_with = { version = "2.0.0", features = ["time_0_3"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.94"
+dotenvy = "0.15.1"
+chrono = "0.4"
+
+store-lib = { path = "../../libraries/store-lib"}
+user-lib = { path = "../../libraries/user-lib"}
+crypto-lib = { path = "../../libraries/crypto-lib"}
+token-lib = { path = "../../libraries/token-lib"}
