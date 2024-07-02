@@ -1,9 +1,14 @@
 use crate::app_state::AppState;
 use axum::{
-    extract::State,
+    extract::{State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Extension, Json,
+
+};
+use axum_extra::extract::{
+    cookie::{Cookie, SameSite},
+    CookieJar,
 };
 use chrono::{Duration, Utc};
 use crypto_lib::crypto::crypto::CryptoOp;
@@ -16,8 +21,9 @@ use std::{
 use store_lib::stores::{
     store::StoreTrait, token_store::TokenPGStore, user_store::UserPGStore, user_store::UserRow,
 };
-use token_lib::token::token::{Token, TokenType};
+use token_lib::token::token::{Token, TokenType,TokenClaims};
 use user_lib::user::user::{User, UserRoles};
+use uuid::Uuid;
 #[derive(Debug, Deserialize)]
 pub struct LoginSchema {
     #[serde(rename = "username")]
@@ -83,8 +89,25 @@ pub async fn login_handler(
     let hmac_key = data.lock().unwrap().config.hmac_key.to_string();
 
     // Generate access token 
+    let expiry = (Utc::now() + Duration::minutes(access_token_ttl_in_min as i64)).naive_utc();
+    println!("access token expiry slated for {:?}",expiry);
+    let token_claim = TokenClaims{
+        sub: user_from_db.get_id().to_string(),
+        token_uuid: Uuid::new_v4(),
+        exp:expiry,
+        iat: Utc::now().naive_utc(),
+        nbf: Utc::now().naive_utc()
+    };
+    let token_claim_string = serde_json::to_string(&token_claim).map_err(|e| {
+        let error_response = serde_json::json!({
+            "status": "fail",
+            "message": format!("Serialization error,{}",e),
+        });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+    })?;
+    let crypto_op = CryptoOp::default();
     let access_token_string = crypto_op
-        .generate_token(&hmac_key, user_from_db.get_id().to_string())
+        .generate_token(&hmac_key, token_claim_string.clone())
         .await
         .map_err(|e| {
             let error_response = serde_json::json!({
@@ -93,34 +116,28 @@ pub async fn login_handler(
             });
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
         })?;
-    let expiry = (Utc::now() + Duration::minutes(access_token_ttl_in_min as i64)).naive_utc();
-    let token_store = TokenPGStore::default();
-    let new_token = Token::new(
-        user_from_db.get_id(),
-        access_token_string.clone(),
-        expiry,
-        TokenType::AccessToken,
-    );
-    let token_json = serde_json::to_value(&new_token).map_err(|e| {
-        let error_response = serde_json::json!({
-            "status": "fail",
-            "message": format!("Json error,{}",e),
-        });
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
-    })?;
 
-    // Save access token
-    token_store.insert(&db, token_json).await.map_err(|e| {
-        let error_response = serde_json::json!({
-            "status": "fail",
-            "message": format!("Could not store activation data,{}",e),
-        });
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
-    })?;
+
+    let token_store = TokenPGStore::default();
 
     // Generate refresh token
+    let expiry = (Utc::now() + Duration::minutes(refresh_token_ttl_in_hr as i64)).naive_utc();
+    let token_claim = TokenClaims{
+        sub: user_from_db.get_id().to_string(),
+        token_uuid: Uuid::new_v4(),
+        exp:expiry,
+        iat: Utc::now().naive_utc(),
+        nbf: Utc::now().naive_utc()
+    };
+    let token_claim_string = serde_json::to_string(&token_claim).map_err(|e| {
+        let error_response = serde_json::json!({
+            "status": "fail",
+            "message": format!("Serialization error,{}",e),
+        });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+    })?;
     let refresh_token_string = crypto_op
-        .generate_token(&hmac_key, user_from_db.get_id().to_string())
+        .generate_token(&hmac_key, token_claim_string.clone())
         .await
         .map_err(|e| {
             let error_response = serde_json::json!({
@@ -129,39 +146,51 @@ pub async fn login_handler(
             });
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
         })?;
-    let expiry = (Utc::now() + Duration::minutes(refresh_token_ttl_in_hr as i64)).naive_utc();
-    let token_store = TokenPGStore::default();
-    let new_token = Token::new(
-        user_from_db.get_id(),
-        refresh_token_string.clone(),
-        expiry,
-        TokenType::RefreshToken,
-    );
-    let token_json = serde_json::to_value(&new_token).map_err(|e| {
-        let error_response = serde_json::json!({
-            "status": "fail",
-            "message": format!("Json error,{}",e),
-        });
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
-    })?;
 
-    // Save Refresh Token
-    token_store.insert(&db, token_json).await.map_err(|e| {
-        let error_response = serde_json::json!({
-            "status": "fail",
-            "message": format!("Could not store activation data,{}",e),
-        });
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
-    })?;
+        let new_token = Token::new(
+            refresh_token_string.clone(),
+            TokenType::RefreshToken
+        );
+        let token_json = serde_json::to_value(&new_token).map_err(|e| {
+            let error_response = serde_json::json!({
+                "status": "fail",
+                "message": format!("Json error,{}",e),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+        })?;
+        token_store.insert(&db, token_json).await.map_err(|e| {
+            let error_response = serde_json::json!({
+                "status": "fail",
+                "message": format!("Could not store refresh data,{}",e),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+        })?;
     // TODO Handle Email Sending
     let mut response = Response::new(
         json!(
         {
             "access_token": access_token_string,
-            "refesh_token": refresh_token_string,
             "status": "success",
         })
         .to_string(),
     );
+    let refresh_cookie = Cookie::build((
+        "refresh_token",
+        refresh_token_string.clone(),
+    ))
+    .path("/")
+    .max_age(time::Duration::minutes(refresh_token_ttl_in_hr as i64))
+    .same_site(SameSite::Strict)
+    .http_only(true)
+    //TODO change this in release
+    .secure(false)
+    .build();
+    let mut headers = HeaderMap::new();
+    headers.append(
+        header::SET_COOKIE,
+        refresh_cookie.to_string().parse().unwrap(),
+    );
+
+    response.headers_mut().extend(headers);
     Ok(response)
 }

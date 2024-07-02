@@ -9,13 +9,14 @@ use axum::{
 use crypto_lib::crypto::crypto::CryptoOp;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::types::Uuid;
 use std::{
     default,
     sync::{Arc, Mutex},
 };
 use store_lib::stores::{store::StoreTrait, token_store::TokenPGStore, user_store::UserPGStore,user_store::UserRow};
 use user_lib::user::user::{User, UserRoles};
-use token_lib::token::token::{Token,TokenType};
+use token_lib::token::token::{Token,TokenType,TokenClaims};
 #[derive(Debug, Deserialize)]
 pub struct SignupSchema {
     #[serde(rename = "username")]
@@ -64,11 +65,26 @@ pub async fn signup_handler(
         });
         (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
     })?;
-    
+    let activation_token_ttl_in_hr:usize = data.lock().unwrap().config.activation_token_ttl_in_hr;
     let hmac_key = data.lock().unwrap().config.hmac_key.to_string();
+    let expiry = (Utc::now()+Duration::hours(activation_token_ttl_in_hr as i64)).naive_utc();
+    let token_claim = TokenClaims{
+        sub: user_row.id.to_string(),
+        token_uuid: Uuid::new_v4(),
+        exp:expiry,
+        iat: Utc::now().naive_utc(),
+        nbf: Utc::now().naive_utc()
+    };
+    let token_claim_string = serde_json::to_string(&token_claim).map_err(|e| {
+        let error_response = serde_json::json!({
+            "status": "fail",
+            "message": format!("Serialization error,{}",e),
+        });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+    })?;
     let crypto_op = CryptoOp::default();
     let token_string = crypto_op
-        .generate_token(&hmac_key, new_user.get_name().to_string())
+        .generate_token(&hmac_key, token_claim_string.clone())
         .await
         .map_err(|e| {
             let error_response = serde_json::json!({
@@ -77,13 +93,11 @@ pub async fn signup_handler(
             });
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
         })?;
-    let activation_token_ttl_in_hr:usize = data.lock().unwrap().config.activation_token_ttl_in_hr;
-    let expiry = (Utc::now()+Duration::hours(activation_token_ttl_in_hr as i64)).naive_utc();
+
+
     let token_store = TokenPGStore::default();
     let new_token = Token::new(
-        user_row.id,
-        token_string,
-        expiry,
+        token_string.clone(),
         TokenType::ActivationToken
     );
     let token_json = serde_json::to_value(&new_token).map_err(|e| {
@@ -101,7 +115,7 @@ pub async fn signup_handler(
         (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
     })?;
     // TODO Handle Email Sending
-    let mut response = Response::new(
+    let response = Response::new(
         json!(
         {
             "status": "success",
