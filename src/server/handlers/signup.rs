@@ -32,7 +32,14 @@ pub async fn signup_handler(
     Json(body): Json<SignupSchema>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let data = data.clone();
-    let db = data.lock().unwrap().db.clone();
+    let db = data.lock().map_err(|e| {
+        println!("{}",e);
+        let error_response = serde_json::json!({
+            "status": "fail",
+            "message": "lock failure"
+        });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+    })?.db.clone();
     let user_store = UserPGStore::default();
     println!("body received: {:?}", body);
     let default_user_role = UserRoles::Normal;

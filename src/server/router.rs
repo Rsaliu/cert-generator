@@ -28,6 +28,11 @@ pub fn define_route(app_state: &Arc<Mutex<AppState>>) -> Router{
         jwt_auth::auth
         ,
     )),)
+    .route("/api/v1/auth/generate-cert", get(handlers::certs::cert_gen_handler).route_layer(middleware::from_fn_with_state(
+        app_state.clone(),
+        jwt_auth::auth
+        ,
+    )),)
     .route("/", get(|| async { println!("home endpoint hit");"Welcome Home!" }))
     ;
     app.with_state(app_state.to_owned())

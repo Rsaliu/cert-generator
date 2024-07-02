@@ -37,7 +37,14 @@ pub async fn login_handler(
     Json(body): Json<LoginSchema>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let data = data.clone();
-    let db = data.lock().unwrap().db.clone();
+    let db = data.lock().map_err(|e| {
+        println!("{}",e);
+        let error_response = serde_json::json!({
+            "status": "fail",
+            "message": "lock failure"
+        });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+    })?.db.clone();
     let refresh_token_ttl_in_hr: usize = data.lock().unwrap().config.refresh_token_ttl_in_hr;
     let access_token_ttl_in_min: usize = data.lock().unwrap().config.access_token_ttl_in_min;
 

@@ -42,8 +42,22 @@ pub async fn logout_handler(
             (StatusCode::FORBIDDEN, Json(error_response))
         })?;
     let data = data.clone();
-    let db = data.lock().unwrap().db.clone();
-    let hmac_key = data.lock().unwrap().config.hmac_key.clone();
+    let db = data.lock().map_err(|e| {
+        println!("{}",e);
+        let error_response = serde_json::json!({
+            "status": "fail",
+            "message": "lock failure"
+        });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+    })?.db.clone();
+    let hmac_key = data.lock().map_err(|e| {
+        println!("{}",e);
+        let error_response = serde_json::json!({
+            "status": "fail",
+            "message": "lock failure"
+        });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+    })?.config.hmac_key.clone();
 
     // verify token
 

@@ -29,7 +29,14 @@ pub async fn get_user_handler(
     Path(user_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let data = data.clone();
-    let db = data.lock().unwrap().db.clone();
+    let db = data.lock().map_err(|e| {
+        println!("{}",e);
+        let error_response = serde_json::json!({
+            "status": "fail",
+            "message": "lock failure"
+        });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+    })?.db.clone();
     let user_store = UserPGStore::default();
     let user_uuid = Uuid::from_str(&user_id).map_err(|e| {
         let error_response = serde_json::json!({
@@ -65,7 +72,14 @@ pub async fn update_user_handler(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let data = data.clone();
-    let db = data.lock().unwrap().db.clone();
+    let db = data.lock().map_err(|e| {
+        println!("{}",e);
+        let error_response = serde_json::json!({
+            "status": "fail",
+            "message": "lock failure"
+        });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+    })?.db.clone();
     let user_store = UserPGStore::default();
     let user_uuid = Uuid::from_str(&user_id).map_err(|_| {
         let error_response = serde_json::json!({
