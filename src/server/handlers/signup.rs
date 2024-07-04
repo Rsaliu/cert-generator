@@ -17,6 +17,8 @@ use std::{
 use store_lib::stores::{store::StoreTrait, token_store::TokenPGStore, user_store::UserPGStore,user_store::UserRow};
 use user_lib::user::user::{User, UserRoles};
 use token_lib::token::token::{Token,TokenType,TokenClaims};
+use crate::Message;
+use std::env;
 #[derive(Debug, Deserialize)]
 pub struct SignupSchema {
     #[serde(rename = "username")]
@@ -27,10 +29,27 @@ pub struct SignupSchema {
     pub password: String,
 }
 
+
+
 pub async fn signup_handler(
     State(data): State<Arc<Mutex<AppState>>>,
     Json(body): Json<SignupSchema>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    static mut TEMPLATE:Option<Mutex<String>> = None;
+    unsafe {
+        if let None = TEMPLATE {
+            TEMPLATE = Some(Mutex::new(String::new()));
+            if let Some(ref template) = TEMPLATE {
+                let mut temp = template.lock().unwrap();
+                *temp =  env::var("ACTIVATION_EMAIL_TEMPLATE").expect("env variable error");
+                println!("template: {}", *temp);
+            }
+        }
+    }
+    // if ! template_read {
+    //     template = env::var("ACTIVATION_EMAIL_TEMPLATE").expect("env variable error");
+    // }
+
     let data = data.clone();
     let db = data.lock().map_err(|e| {
         println!("{}",e);
@@ -42,6 +61,7 @@ pub async fn signup_handler(
     })?.db.clone();
     let user_store = UserPGStore::default();
     println!("body received: {:?}", body);
+    
     let default_user_role = UserRoles::Normal;
     let new_user = User::new(body.username, body.password, body.email, default_user_role);
     let user_json = serde_json::to_value(&new_user).map_err(|e| {
@@ -118,6 +138,43 @@ pub async fn signup_handler(
         let error_response = serde_json::json!({
             "status": "fail",
             "message": format!("Could not store activation data,{}",e),
+        });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+    })?;
+
+    // get mpsc channel from context
+    let messenger_channel_sender = data.lock().map_err(|e| {
+        println!("{}",e);
+        let error_response = serde_json::json!({
+            "status": "fail",
+            "message": "lock failure"
+        });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+    })?.messenger_channel_sender.clone();
+    let mut message_body:String = String::new();
+    unsafe {
+        if let Some(ref template) = TEMPLATE {
+            let temp = template.lock().unwrap();
+            message_body = temp.clone();
+            println!("template: {}", *temp);
+        }
+    }
+    message_body = message_body.replace("{username}", &user_row.username);
+    message_body = message_body.replace("{token}", &token_string);
+    println!("after replacement we have: {}",message_body);
+    // construct message
+    let message = Message{
+        id: Uuid::new_v4().to_string(),
+        receipients: vec![user_row.email],
+        topic:"Activation Email".to_string(),
+        message: message_body
+    };
+    // send message to channel
+    messenger_channel_sender.send(message).await.map_err(|e| {
+        println!("{}",e);
+        let error_response = serde_json::json!({
+            "status": "fail",
+            "message": "messenger send failure"
         });
         (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
     })?;
